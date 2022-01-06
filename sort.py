@@ -19,10 +19,7 @@ from __future__ import print_function
 
 import os
 import numpy as np
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+from tqdm import tqdm
 from skimage import io
 
 import glob
@@ -73,6 +70,7 @@ def convert_bbox_to_z(bbox):
   h = bbox[3] - bbox[1]
   x = bbox[0] + w/2.
   y = bbox[1] + h/2.
+
   s = w * h    #scale is just area
   r = w / float(h)
   return np.array([x, y, s, r]).reshape((4, 1))
@@ -257,7 +255,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description='SORT demo')
     parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
-    parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='train')
     parser.add_argument("--max_age", 
                         help="Maximum number of frames to keep alive a track without associated detections.", 
                         type=int, default=1)
@@ -272,7 +269,6 @@ if __name__ == '__main__':
   # all train
   args = parse_args()
   display = args.display
-  phase = args.phase
   total_time = 0.0
   total_frames = 0
   colours = np.random.rand(32, 3) #used only for display
@@ -286,16 +282,16 @@ if __name__ == '__main__':
 
   if not os.path.exists('output'):
     os.makedirs('output')
-  pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
-  for seq_dets_fn in glob.glob(pattern):
+  pattern = os.path.join(args.seq_path, '20bn-something-something-v2', '*.txt')
+  for seq_dets_fn in tqdm(glob.glob(pattern)):
     mot_tracker = Sort(max_age=args.max_age, 
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
     seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
     seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
     
-    with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
-      print("Processing %s."%(seq))
+    with open(os.path.join('output', '%s'%(seq)),'w') as out_file:
+      #print("Processing %s."%(seq))
       for frame in range(int(seq_dets[:,0].max())):
         frame += 1 #detection and frame numbers begin at 1
         dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
