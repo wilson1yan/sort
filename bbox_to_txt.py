@@ -10,7 +10,9 @@ def to_txt(filepath):
     bboxes = np.load(filepath) # TK4
     bboxes[:, :, 2:] -= bboxes[:, :, :2] # TK4
     T, K = bboxes.shape[:2]
-    valid = (bboxes[:, :, 2] * bboxes[:, :, 3]) > 100
+    assert T >= 16, filepath
+    valid = (bboxes[:, :, 2] * bboxes[:, :, 3]) > 10
+    assert valid.sum() > 0
 
     out = np.full((valid.sum(), 10), fill_value=-1, dtype=np.float32)
     i = 0

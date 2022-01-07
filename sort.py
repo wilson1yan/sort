@@ -17,6 +17,7 @@
 """
 from __future__ import print_function
 
+import math
 import os
 import numpy as np
 from tqdm import tqdm
@@ -26,6 +27,7 @@ import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
+import multiprocessing as mp
 
 np.random.seed(0)
 
@@ -253,7 +255,6 @@ class Sort(object):
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
-    parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
     parser.add_argument("--max_age", 
                         help="Maximum number of frames to keep alive a track without associated detections.", 
@@ -265,25 +266,11 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-if __name__ == '__main__':
-  # all train
-  args = parse_args()
-  display = args.display
-  total_time = 0.0
-  total_frames = 0
-  colours = np.random.rand(32, 3) #used only for display
-  if(display):
-    if not os.path.exists('mot_benchmark'):
-      print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
-      exit()
-    plt.ion()
-    fig = plt.figure()
-    ax1 = fig.add_subplot(111, aspect='equal')
 
-  if not os.path.exists('output'):
-    os.makedirs('output')
-  pattern = os.path.join(args.seq_path, '20bn-something-something-v2', '*.txt')
-  for seq_dets_fn in tqdm(glob.glob(pattern)):
+def worker(worker_id, args, seq_dets_lst, pattern):
+  if worker_id == 0:
+    pbar = tqdm(total=len(seq_dets_lst))
+  for seq_dets_fn in seq_dets_lst:
     mot_tracker = Sort(max_age=args.max_age, 
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
@@ -292,35 +279,42 @@ if __name__ == '__main__':
     
     with open(os.path.join('output', '%s'%(seq)),'w') as out_file:
       #print("Processing %s."%(seq))
+      if len(seq_dets.shape) == 1:
+        print(seq_dets_fn)
       for frame in range(int(seq_dets[:,0].max())):
         frame += 1 #detection and frame numbers begin at 1
         dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
         dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
-        total_frames += 1
-
-        if(display):
-          fn = os.path.join('mot_benchmark', phase, seq, 'img1', '%06d.jpg'%(frame))
-          im =io.imread(fn)
-          ax1.imshow(im)
-          plt.title(seq + ' Tracked Targets')
 
         start_time = time.time()
         trackers = mot_tracker.update(dets)
         cycle_time = time.time() - start_time
-        total_time += cycle_time
 
         for d in trackers:
           print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
-          if(display):
-            d = d.astype(np.int32)
-            ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
+    if worker_id == 0:
+      pbar.update(1)
+  if worker_id == 0:
+    pbar.close()
 
-        if(display):
-          fig.canvas.flush_events()
-          plt.draw()
-          ax1.cla()
 
-  print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
+if __name__ == '__main__':
+  # all train
+  args = parse_args()
 
-  if(display):
-    print("Note: to get real runtime results run without the option: --display")
+  if not os.path.exists('output'):
+    os.makedirs('output')
+
+  
+  n_workers = 16
+  pattern = os.path.join(args.seq_path, '20bn-something-something-v2', '*.txt')
+  seq_dets_lst = glob.glob(pattern)
+  print(len(seq_dets_lst))
+  chunk_size = math.ceil(len(seq_dets_lst) / n_workers)
+  seq_dets_chunks = [seq_dets_lst[i * chunk_size:(i + 1) * chunk_size] for i in range(n_workers)]
+  assert sum([len(c) for c in seq_dets_chunks]) == len(seq_dets_lst)
+  proc_args = [(i, args, c, pattern) for i, c in enumerate(seq_dets_chunks)]
+  procs = [mp.Process(target=worker, args=proc_args[i]) for i in range(n_workers)]
+  [p.start() for p in procs]
+  [p.join() for p in procs]
+
